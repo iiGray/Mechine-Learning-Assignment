@@ -165,6 +165,7 @@ target_scaler_long = scalers_long[target_idx]
 
 def make_dataloader(X, y, shuffle=True):
     dataset = TensorDataset(torch.FloatTensor(X), torch.FloatTensor(y))
+    print("Datas:", len(dataset))
     return DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=shuffle)
 
 short_train_loader = make_dataloader(X_short_train_n, y_short_train)
