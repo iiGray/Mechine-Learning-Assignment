@@ -308,8 +308,8 @@ class FreqTimeBlock(nn.Module):
         # 自适应门控融合
         fused = self.gate(freq_out, temp_out)
 
-        # 前馈网络
-        return self.ffn(fused)
+        # 前馈网络 + 残差连接
+        return x + self.ffn(fused)
 
 
 class LearnablePositionalEncoding(nn.Module):
