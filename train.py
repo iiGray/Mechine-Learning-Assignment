@@ -217,8 +217,6 @@ def run_experiment(model_name, model_class, model_kwargs, train_loader, test_loa
 
         print(f"\n--- Round {r+1}/{NUM_ROUNDS} (seed={seed}) ---")
         model = model_class(**model_kwargs).to(DEVICE)
-        n_params = sum(p.numel() for p in model.parameters())
-        print(f"  Parameters: {n_params:,}")
 
         t0 = time.time()
         _, loss_history = train_model(model, train_loader, NUM_EPOCHS,
