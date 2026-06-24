@@ -19,7 +19,7 @@ INPUT_LEN = 90
 SHORT_OUTPUT = 90   
 LONG_OUTPUT = 365   
 BATCH_SIZE = 64
-NUM_EPOCHS = 200
+NUM_EPOCHS = 500
 NUM_ROUNDS = 5
 LEARNING_RATE = 1e-3
 WEIGHT_DECAY = 1e-5
@@ -202,8 +202,10 @@ def run_experiment(model_name, model_class, model_kwargs, train_loader, test_loa
 
     mse_list, mae_list = [], []
     best_mse = float('inf')
+    best_mae = float('inf')
     best_preds, best_targets = None, None
     best_round = 0
+    model_slug = model_name.lower()
 
     for r in range(NUM_ROUNDS):
         seed = seed_base + r
@@ -224,15 +226,24 @@ def run_experiment(model_name, model_class, model_kwargs, train_loader, test_loa
         mae_list.append(mae)
         print(f"  Train time: {train_time:.1f}s, MSE: {mse:.4f}, MAE: {mae:.4f}")
 
+        # ---- 保存每轮预测数据 ----
+        np.savez(f'pred_{model_slug}_{output_len}d_round{r+1}.npz',
+                 preds=preds, targets=targets, mse=mse, mae=mae)
+
         if mse < best_mse:
             best_mse = mse
+            best_mae = mae
             best_preds = preds
             best_targets = targets
             best_round = r + 1
 
             torch.save(model.state_dict(),
-                       f'model_{model_name.lower()}_{output_len}d_best.pt')
+                       f'model_{model_slug}_{output_len}d_best.pt')
 
+    # ---- 保存最佳轮预测数据 ----
+    np.savez(f'pred_{model_slug}_{output_len}d_best.npz',
+             preds=best_preds, targets=best_targets,
+             mse=best_mse, mae=best_mae, round=best_round)
 
     mse_arr = np.array(mse_list)
     mae_arr = np.array(mae_list)
@@ -255,6 +266,7 @@ def run_experiment(model_name, model_class, model_kwargs, train_loader, test_loa
         'mae_list': mae_list,
         'best_preds': best_preds,
         'best_targets': best_targets,
+        'best_round': best_round,
     }
 
 all_results = []
