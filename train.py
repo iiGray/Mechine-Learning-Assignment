@@ -14,6 +14,7 @@ warnings.filterwarnings('ignore')
 from models import LSTMPredictor, TransformerPredictor
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 INPUT_LEN = 90     
 SHORT_OUTPUT = 90   
 LONG_OUTPUT = 365   
@@ -261,7 +262,7 @@ all_results = []
 
 all_results.append(run_experiment(
     'LSTM', LSTMPredictor,
-    {'input_dim': len(feature_cols), 'hidden_dim': 128, 'num_layers': 8,
+    {'input_dim': len(feature_cols), 'hidden_dim': 256, 'num_layers': 2,
      'output_len': SHORT_OUTPUT, 'dropout': 0.2},
     short_train_loader, short_test_loader, target_scaler_short, SHORT_OUTPUT
 ))
@@ -269,7 +270,7 @@ all_results.append(run_experiment(
 
 all_results.append(run_experiment(
     'LSTM', LSTMPredictor,
-    {'input_dim': len(feature_cols), 'hidden_dim': 128, 'num_layers': 8,
+    {'input_dim': len(feature_cols), 'hidden_dim': 256, 'num_layers': 2,
      'output_len': LONG_OUTPUT, 'dropout': 0.2},
     long_train_loader, long_test_loader, target_scaler_long, LONG_OUTPUT
 ))
@@ -277,7 +278,7 @@ all_results.append(run_experiment(
 
 all_results.append(run_experiment(
     'Transformer', TransformerPredictor,
-    {'input_dim': len(feature_cols), 'd_model': 128, 'nhead': 8, 'num_layers': 8,
+    {'input_dim': len(feature_cols), 'd_model': 256, 'nhead': 8, 'num_layers': 3,
      'output_len': SHORT_OUTPUT, 'dropout': 0.1},
     short_train_loader, short_test_loader, target_scaler_short, SHORT_OUTPUT
 ))
@@ -285,7 +286,7 @@ all_results.append(run_experiment(
 
 all_results.append(run_experiment(
     'Transformer', TransformerPredictor,
-    {'input_dim': len(feature_cols), 'd_model': 128, 'nhead': 8, 'num_layers': 8,
+    {'input_dim': len(feature_cols), 'd_model': 256, 'nhead': 8, 'num_layers': 3,
      'output_len': LONG_OUTPUT, 'dropout': 0.1},
     long_train_loader, long_test_loader, target_scaler_long, LONG_OUTPUT
 ))

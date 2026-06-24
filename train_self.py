@@ -53,10 +53,12 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error
 import warnings
 import time
 import os
+from tqdm import tqdm
 warnings.filterwarnings('ignore')
 
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 INPUT_LEN = 90
 SHORT_OUTPUT = 90
 LONG_OUTPUT = 365
@@ -329,7 +331,7 @@ class FreqTimeNet(nn.Module):
     def _init_weights(self):
         for p in self.parameters():
             if p.dim() > 1:
-                nn.init.xavier_uniform_(p, gain=0.5)
+                nn.init.xavier_uniform_(p)
 
     def forward(self, x):
         """
@@ -430,16 +432,33 @@ X_long_train_n, X_long_test_n, scalers_long = normalize_data(
 target_scaler_short = scalers_short[target_idx]
 target_scaler_long = scalers_long[target_idx]
 
+# ============================================================
+# 关键修复：对目标值 y 做归一化
+# y 与 X[:,:,target_idx] 同为 Global_active_power，用同一scaler
+# ============================================================
+y_short_train_n = target_scaler_short.transform(
+    y_short_train.reshape(-1, 1)).reshape(y_short_train.shape)
+y_short_test_n = target_scaler_short.transform(
+    y_short_test.reshape(-1, 1)).reshape(y_short_test.shape)
+y_long_train_n = target_scaler_long.transform(
+    y_long_train.reshape(-1, 1)).reshape(y_long_train.shape)
+y_long_test_n = target_scaler_long.transform(
+    y_long_test.reshape(-1, 1)).reshape(y_long_test.shape)
+
+print(f"y_short_train raw range: [{y_short_train.min():.2f}, {y_short_train.max():.2f}]")
+print(f"y_short_train norm range: [{y_short_train_n.min():.2f}, {y_short_train_n.max():.2f}]")
+print(f"y_long_train raw range: [{y_long_train.min():.2f}, {y_long_train.max():.2f}]")
+print(f"y_long_train norm range: [{y_long_train_n.min():.2f}, {y_long_train_n.max():.2f}]")
 
 def make_dataloader(X, y, shuffle=True):
     dataset = TensorDataset(torch.FloatTensor(X), torch.FloatTensor(y))
     return DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=shuffle)
 
 
-short_train_loader = make_dataloader(X_short_train_n, y_short_train)
-short_test_loader = make_dataloader(X_short_test_n, y_short_test, shuffle=False)
-long_train_loader = make_dataloader(X_long_train_n, y_long_train)
-long_test_loader = make_dataloader(X_long_test_n, y_long_test, shuffle=False)
+short_train_loader = make_dataloader(X_short_train_n, y_short_train_n)
+short_test_loader = make_dataloader(X_short_test_n, y_short_test_n, shuffle=False)
+long_train_loader = make_dataloader(X_long_train_n, y_long_train_n)
+long_test_loader = make_dataloader(X_long_test_n, y_long_test_n, shuffle=False)
 
 
 # ============================================================
@@ -455,7 +474,7 @@ def train_model(model, train_loader, epochs, lr, wd, verbose=True):
     patience_counter = 0
     best_state = None
 
-    for epoch in range(epochs):
+    for epoch in tqdm(range(epochs)):
         total_loss = 0
         for batch_x, batch_y in train_loader:
             batch_x, batch_y = batch_x.to(DEVICE), batch_y.to(DEVICE)
@@ -582,7 +601,7 @@ if __name__ == "__main__":
     # 短期预测 (90→90)
     all_results.append(run_experiment(
         'FreqTimeNet', FreqTimeNet,
-        {'input_dim': len(feature_cols), 'd_model': 128, 'num_blocks': 3,
+        {'input_dim': len(feature_cols), 'd_model': 128, 'num_blocks': 8,
         'output_len': SHORT_OUTPUT, 'dropout': 0.1},
         short_train_loader, short_test_loader, target_scaler_short, SHORT_OUTPUT
     ))
@@ -590,7 +609,7 @@ if __name__ == "__main__":
     # 长期预测 (90→365)
     all_results.append(run_experiment(
         'FreqTimeNet', FreqTimeNet,
-        {'input_dim': len(feature_cols), 'd_model': 128, 'num_blocks': 3,
+        {'input_dim': len(feature_cols), 'd_model': 128, 'num_blocks': 8,
         'output_len': LONG_OUTPUT, 'dropout': 0.1},
         long_train_loader, long_test_loader, target_scaler_long, LONG_OUTPUT
     ))
