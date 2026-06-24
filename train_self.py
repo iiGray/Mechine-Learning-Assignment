@@ -113,8 +113,10 @@ class FourierMixer(nn.Module):
         Xf_real, Xf_imag = Xf.real, Xf.imag
         out_real = Xf_real @ self.W_real - Xf_imag @ self.W_imag
         out_imag = Xf_real @ self.W_imag + Xf_imag @ self.W_real
+        # dropout 不支持复数张量，分别对实部和虚部做 dropout
+        out_real = self.dropout(out_real)
+        out_imag = self.dropout(out_imag)
         Xf_out = torch.complex(out_real, out_imag)
-        Xf_out = self.dropout(Xf_out)
 
         # Step 3: 逆FFT回到时域
         out = torch.fft.irfft(Xf_out, n=L, dim=1, norm='ortho')  # (B, L, D)
