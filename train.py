@@ -164,15 +164,32 @@ X_long_train_n, X_long_test_n, scalers_long = normalize_data(X_long_train, X_lon
 target_scaler_short = scalers_short[target_idx]
 target_scaler_long = scalers_long[target_idx]
 
+# ============================================================
+# 关键修复：对目标值 y 做归一化
+# y 与 X[:,:,target_idx] 同为 Global_active_power，用同一scaler
+# ============================================================
+y_short_train_n = target_scaler_short.transform(
+    y_short_train.reshape(-1, 1)).reshape(y_short_train.shape)
+y_short_test_n = target_scaler_short.transform(
+    y_short_test.reshape(-1, 1)).reshape(y_short_test.shape)
+y_long_train_n = target_scaler_long.transform(
+    y_long_train.reshape(-1, 1)).reshape(y_long_train.shape)
+y_long_test_n = target_scaler_long.transform(
+    y_long_test.reshape(-1, 1)).reshape(y_long_test.shape)
+
+print(f"y_short_train raw range: [{y_short_train.min():.2f}, {y_short_train.max():.2f}]")
+print(f"y_short_train norm range: [{y_short_train_n.min():.2f}, {y_short_train_n.max():.2f}]")
+print(f"y_long_train raw range: [{y_long_train.min():.2f}, {y_long_train.max():.2f}]")
+print(f"y_long_train norm range: [{y_long_train_n.min():.2f}, {y_long_train_n.max():.2f}]")
+
 def make_dataloader(X, y, shuffle=True):
     dataset = TensorDataset(torch.FloatTensor(X), torch.FloatTensor(y))
-    print("Datas:", len(dataset))
     return DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=shuffle)
 
-short_train_loader = make_dataloader(X_short_train_n, y_short_train)
-short_test_loader = make_dataloader(X_short_test_n, y_short_test, shuffle=False)
-long_train_loader = make_dataloader(X_long_train_n, y_long_train)
-long_test_loader = make_dataloader(X_long_test_n, y_long_test, shuffle=False)
+short_train_loader = make_dataloader(X_short_train_n, y_short_train_n)
+short_test_loader = make_dataloader(X_short_test_n, y_short_test_n, shuffle=False)
+long_train_loader = make_dataloader(X_long_train_n, y_long_train_n)
+long_test_loader = make_dataloader(X_long_test_n, y_long_test_n, shuffle=False)
 
 
 def run_experiment(model_name, model_class, model_kwargs, train_loader, test_loader,
@@ -244,7 +261,7 @@ all_results = []
 
 all_results.append(run_experiment(
     'LSTM', LSTMPredictor,
-    {'input_dim': len(feature_cols), 'hidden_dim': 128, 'num_layers': 2,
+    {'input_dim': len(feature_cols), 'hidden_dim': 128, 'num_layers': 8,
      'output_len': SHORT_OUTPUT, 'dropout': 0.2},
     short_train_loader, short_test_loader, target_scaler_short, SHORT_OUTPUT
 ))
@@ -252,7 +269,7 @@ all_results.append(run_experiment(
 
 all_results.append(run_experiment(
     'LSTM', LSTMPredictor,
-    {'input_dim': len(feature_cols), 'hidden_dim': 128, 'num_layers': 2,
+    {'input_dim': len(feature_cols), 'hidden_dim': 128, 'num_layers': 8,
      'output_len': LONG_OUTPUT, 'dropout': 0.2},
     long_train_loader, long_test_loader, target_scaler_long, LONG_OUTPUT
 ))
@@ -260,7 +277,7 @@ all_results.append(run_experiment(
 
 all_results.append(run_experiment(
     'Transformer', TransformerPredictor,
-    {'input_dim': len(feature_cols), 'd_model': 128, 'nhead': 8, 'num_layers': 3,
+    {'input_dim': len(feature_cols), 'd_model': 128, 'nhead': 8, 'num_layers': 8,
      'output_len': SHORT_OUTPUT, 'dropout': 0.1},
     short_train_loader, short_test_loader, target_scaler_short, SHORT_OUTPUT
 ))
@@ -268,7 +285,7 @@ all_results.append(run_experiment(
 
 all_results.append(run_experiment(
     'Transformer', TransformerPredictor,
-    {'input_dim': len(feature_cols), 'd_model': 128, 'nhead': 8, 'num_layers': 3,
+    {'input_dim': len(feature_cols), 'd_model': 128, 'nhead': 8, 'num_layers': 8,
      'output_len': LONG_OUTPUT, 'dropout': 0.1},
     long_train_loader, long_test_loader, target_scaler_long, LONG_OUTPUT
 ))
