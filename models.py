@@ -15,33 +15,24 @@ class LSTMPredictor(nn.Module):
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
 
-        # 编码器 LSTM
         self.encoder = nn.LSTM(
             input_dim, hidden_dim, num_layers,
             batch_first=True, dropout=dropout if num_layers > 1 else 0
         )
 
-        # 解码器 LSTM
         self.decoder = nn.LSTM(
             1, hidden_dim, num_layers,
             batch_first=True, dropout=dropout if num_layers > 1 else 0
         )
 
-        # 输出投影
         self.fc = nn.Linear(hidden_dim, 1)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
-        """
-        x: (batch, input_len, input_dim) - 90天输入
-        返回: (batch, output_len) - 预测序列
-        """
         batch_size = x.size(0)
 
-        # 编码
         _, (hidden, cell) = self.encoder(x)
 
-        # 解码: 使用最后一个输入的目标值作为初始输入
         decoder_input = x[:, -1, 0:1].unsqueeze(1)  # (batch, 1, 1)
         outputs = []
 
@@ -56,7 +47,6 @@ class LSTMPredictor(nn.Module):
 
 
 class PositionalEncoding(nn.Module):
-    """Transformer 位置编码"""
     def __init__(self, d_model, max_len=500, dropout=0.1):
         super().__init__()
         self.dropout = nn.Dropout(p=dropout)
@@ -75,20 +65,16 @@ class PositionalEncoding(nn.Module):
 
 
 class TransformerPredictor(nn.Module):
-    """Transformer 编码器时间序列预测模型"""
     def __init__(self, input_dim, d_model=128, nhead=8, num_layers=3,
                  output_len=90, dropout=0.1):
         super().__init__()
         self.output_len = output_len
         self.d_model = d_model
 
-        # 输入投影
         self.input_proj = nn.Linear(input_dim, d_model)
 
-        # 位置编码
         self.pos_encoder = PositionalEncoding(d_model, max_len=500, dropout=dropout)
 
-        # Transformer 编码器
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model, nhead=nhead, dim_feedforward=d_model*4,
             dropout=dropout, batch_first=True
