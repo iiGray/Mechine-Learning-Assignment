@@ -8,6 +8,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error
 import warnings
 import time
 import os
+from tqdm import tqdm
 warnings.filterwarnings('ignore')
 
 from models import LSTMPredictor, TransformerPredictor
@@ -81,7 +82,7 @@ def train_model(model, train_loader, epochs, lr, wd, verbose=True):
     patience_counter = 0
     best_state = None
 
-    for epoch in range(epochs):
+    for epoch in tqdm(range(epochs)):
         total_loss = 0
         for batch_x, batch_y in train_loader:
             batch_x, batch_y = batch_x.to(DEVICE), batch_y.to(DEVICE)
