@@ -38,9 +38,6 @@ TRAIN_RATIO = 0.8
 print(f"Device: {DEVICE}")
 print(f"Input: {INPUT_LEN} days, Short-term: {SHORT_OUTPUT} days, Long-term: {LONG_OUTPUT} days")
 
-# ============================================================
-# 加载数据
-# ============================================================
 print("\n" + "="*60)
 print("加载预处理数据")
 print("="*60)
@@ -85,9 +82,6 @@ def normalize_data(train_data, test_data):
     return train_norm, test_norm, scalers
 
 
-# ============================================================
-# 训练函数
-# ============================================================
 def train_model(model, train_loader, epochs, lr, wd, verbose=True):
     model.train()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=wd)

@@ -21,9 +21,6 @@ warnings.filterwarnings('ignore')
 
 from models import LSTMPredictor
 
-# ============================================================
-# 配置
-# ============================================================
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 INPUT_LEN = 90
 SHORT_OUTPUT = 90
@@ -38,9 +35,7 @@ TRAIN_RATIO = 0.8
 print(f"Device: {DEVICE}")
 print(f"Input: {INPUT_LEN} days, Short-term: {SHORT_OUTPUT} days, Long-term: {LONG_OUTPUT} days")
 
-# ============================================================
-# 加载数据
-# ============================================================
+
 print("\n" + "="*60)
 print("加载预处理数据")
 print("="*60)

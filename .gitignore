@@ -1,0 +1,11 @@
+.gitignore
+2026-专硕机器学习课程考核.pdf
+
+**/__pycache__
+.DS_Store
+
+report
+*.npz
+
+result.txt
+household_power_consumption.txt

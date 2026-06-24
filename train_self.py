@@ -60,9 +60,11 @@ warnings.filterwarnings('ignore')
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 INPUT_LEN = 90
+INPUT_LEN_LONG = 180          # 长期任务用更长输入，提升FFT频率分辨率（1/180 cycle/day，覆盖半年周期）
 SHORT_OUTPUT = 90
 LONG_OUTPUT = 365
 BATCH_SIZE = 64
+BATCH_SIZE_LONG = 32        # 长期任务输入更长，减小batch防OOM
 NUM_EPOCHS = 200
 NUM_ROUNDS = 5
 LEARNING_RATE = 1e-3
@@ -70,7 +72,7 @@ WEIGHT_DECAY = 1e-5
 TRAIN_RATIO = 0.8
 
 print(f"Device: {DEVICE}")
-print(f"Input: {INPUT_LEN} days, Short-term: {SHORT_OUTPUT} days, Long-term: {LONG_OUTPUT} days")
+print(f"Input: {INPUT_LEN}/{INPUT_LEN_LONG} days, Short-term: {SHORT_OUTPUT} days, Long-term: {LONG_OUTPUT} days")
 
 
 # ============================================================
@@ -78,18 +80,6 @@ print(f"Input: {INPUT_LEN} days, Short-term: {SHORT_OUTPUT} days, Long-term: {LO
 # ============================================================
 
 class FourierMixer(nn.Module):
-    """
-    傅里叶域混合层 — 替代自注意力的全局信息交换机制
-
-    原理：在频域中通过可学习的复数线性变换实现全局信息混合。
-    根据卷积定理：时域卷积 = 频域逐元素乘法。
-    因此，频域中的复数矩阵乘法等价于时域中的全局（非因果）卷积。
-
-    相比自注意力的优势：
-    - 复杂度 O(N log N) vs O(N²)
-    - 自然捕获周期性模式
-    - 无需位置编码来感知顺序（频率天然编码了位置信息）
-    """
     def __init__(self, d_model, dropout=0.1):
         super().__init__()
         # 可学习的复数权重矩阵
@@ -457,7 +447,7 @@ print("构建滑动窗口数据集")
 print("=" * 60)
 
 X_short, y_short = create_sliding_windows(data, INPUT_LEN, SHORT_OUTPUT, target_idx)
-X_long, y_long = create_sliding_windows(data, INPUT_LEN, LONG_OUTPUT, target_idx)
+X_long, y_long = create_sliding_windows(data, INPUT_LEN_LONG, LONG_OUTPUT, target_idx)
 print(f"短期数据集: X={X_short.shape}, y={y_short.shape}")
 print(f"长期数据集: X={X_long.shape}, y={y_long.shape}")
 
@@ -496,15 +486,15 @@ print(f"y_short_train norm range: [{y_short_train_n.min():.2f}, {y_short_train_n
 print(f"y_long_train raw range: [{y_long_train.min():.2f}, {y_long_train.max():.2f}]")
 print(f"y_long_train norm range: [{y_long_train_n.min():.2f}, {y_long_train_n.max():.2f}]")
 
-def make_dataloader(X, y, shuffle=True):
+def make_dataloader(X, y, shuffle=True, batch_size=BATCH_SIZE):
     dataset = TensorDataset(torch.FloatTensor(X), torch.FloatTensor(y))
-    return DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=shuffle)
+    return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
 
 
 short_train_loader = make_dataloader(X_short_train_n, y_short_train_n)
 short_test_loader = make_dataloader(X_short_test_n, y_short_test_n, shuffle=False)
-long_train_loader = make_dataloader(X_long_train_n, y_long_train_n)
-long_test_loader = make_dataloader(X_long_test_n, y_long_test_n, shuffle=False)
+long_train_loader = make_dataloader(X_long_train_n, y_long_train_n, batch_size=BATCH_SIZE_LONG)
+long_test_loader = make_dataloader(X_long_test_n, y_long_test_n, shuffle=False, batch_size=BATCH_SIZE_LONG)
 
 
 # ============================================================
@@ -601,6 +591,8 @@ def run_experiment(model_name, model_class, model_kwargs, train_loader,
 
         print(f"\n--- Round {r + 1}/{NUM_ROUNDS} (seed={seed}) ---")
         model = model_class(**model_kwargs).to(DEVICE)
+        n_params = sum(p.numel() for p in model.parameters())
+        print(f"  Parameters: {n_params:,}")
 
         t0 = time.time()
         _, loss_history = train_model(model, train_loader, NUM_EPOCHS,
@@ -661,22 +653,19 @@ def run_experiment(model_name, model_class, model_kwargs, train_loader,
 if __name__ == "__main__":
     all_results = []
 
-    # 短期预测 (90→90)
     all_results.append(run_experiment(
         'FreqTimeNet', FreqTimeNet,
-        {'input_dim': len(feature_cols), 'd_model': 128, 'num_blocks': 8,
+        {'input_dim': len(feature_cols), 'd_model': 256, 'num_blocks': 2,
         'output_len': SHORT_OUTPUT, 'dropout': 0.1},
         short_train_loader, short_test_loader, target_scaler_short, SHORT_OUTPUT
     ))
 
-    # 长期预测 (90→365)
     all_results.append(run_experiment(
         'FreqTimeNet', FreqTimeNet,
-        {'input_dim': len(feature_cols), 'd_model': 128, 'num_blocks': 8,
+        {'input_dim': len(feature_cols), 'd_model': 256, 'num_blocks': 2,
         'output_len': LONG_OUTPUT, 'dropout': 0.1},
         long_train_loader, long_test_loader, target_scaler_long, LONG_OUTPUT
     ))
-
     # ============================================================
     # 汇总结果
     # ============================================================
@@ -713,33 +702,3 @@ if __name__ == "__main__":
     for f in sorted(os.listdir('.')):
         if f.startswith('model_freqtimenet_') and f.endswith('.pt'):
             print(f"  - {f}")
-
-    print("\n" + "=" * 70)
-    print("设计理由总结:")
-    print("=" * 70)
-    print("""
-    FreqTimeNet 与 LSTM/Transformer 的本质区别：
-
-    1. 全局建模方式：
-    - LSTM: 递归（逐步传递隐藏状态，远距离信息衰减）
-    - Transformer: 自注意力（O(N²)成对比较，缺乏周期性先验）
-    - FreqTimeNet: 频域混合（O(N log N)，天然捕获周期性）
-      + 可学习频域缩放因子，稳定复数域数值
-
-    2. 解码策略：
-    - LSTM: 自回归（误差累积，365步后严重偏离）
-    - Transformer: 可学习查询向量 + 交叉注意力
-    - FreqTimeNet: 查询向量 + 交叉注意力解码器
-      保留完整编码序列作为 memory（不做池化），
-      查询向量通过 self-attn + cross-attn 按需提取信息，
-      避免 pooling → MLP 的信息瓶颈
-
-    3. 多尺度处理：
-    - LSTM: 单一时间尺度
-    - Transformer: 通过多个注意力头隐式建模
-    - FreqTimeNet: 显式多尺度扩张卷积，覆盖1-63天感受野
-
-    4. 自适应能力：
-    - LSTM/Transformer: 固定的信息处理路径
-    - FreqTimeNet: 自适应频时融合门根据输入动态调整
-    """)
