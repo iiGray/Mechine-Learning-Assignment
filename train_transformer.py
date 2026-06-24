@@ -303,7 +303,7 @@ if __name__ == "__main__":
     # 短期预测 (90→90)
     all_results.append(run_experiment(
         'Transformer', TransformerPredictor,
-        {'input_dim': len(feature_cols), 'd_model': 256, 'nhead': 8, 'num_layers': 3,
+        {'input_dim': len(feature_cols), 'd_model': 256, 'nhead': 8, 'num_layers': 2,
          'output_len': SHORT_OUTPUT, 'dropout': 0.1},
         short_train_loader, short_test_loader, target_scaler_short, SHORT_OUTPUT
     ))
@@ -311,7 +311,7 @@ if __name__ == "__main__":
     # 长期预测 (90→365)
     all_results.append(run_experiment(
         'Transformer', TransformerPredictor,
-        {'input_dim': len(feature_cols), 'd_model': 256, 'nhead': 8, 'num_layers': 3,
+        {'input_dim': len(feature_cols), 'd_model': 256, 'nhead': 8, 'num_layers': 2,
          'output_len': LONG_OUTPUT, 'dropout': 0.1},
         long_train_loader, long_test_loader, target_scaler_long, LONG_OUTPUT
     ))
