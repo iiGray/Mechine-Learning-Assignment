@@ -96,6 +96,8 @@ class FourierMixer(nn.Module):
         # W = W_real + i * W_imag
         self.W_real = nn.Parameter(torch.randn(d_model, d_model) * 0.02)
         self.W_imag = nn.Parameter(torch.randn(d_model, d_model) * 0.02)
+        # 可学习的逐通道频域缩放因子，稳定复数域数值
+        self.freq_scale = nn.Parameter(torch.ones(d_model))
         self.dropout = nn.Dropout(dropout)
         self.norm = nn.LayerNorm(d_model)
 
@@ -117,6 +119,8 @@ class FourierMixer(nn.Module):
         out_real = self.dropout(out_real)
         out_imag = self.dropout(out_imag)
         Xf_out = torch.complex(out_real, out_imag)
+        # 逐通道频域缩放，防止高频分量爆炸
+        Xf_out = Xf_out * self.freq_scale.view(1, 1, -1)
 
         # Step 3: 逆FFT回到时域
         out = torch.fft.irfft(Xf_out, n=L, dim=1, norm='ortho')  # (B, L, D)
@@ -232,6 +236,50 @@ class FeedForward(nn.Module):
         return self.norm(x + self.net(x))
 
 
+class QueryDecoder(nn.Module):
+    """
+    可学习查询 + 交叉注意力解码器
+
+    替代 MLP 直接映射，通过 cross-attention 从编码序列中提取信息：
+    1. 可学习的输出位置查询向量 (output_len, d_model)
+    2. 查询向量做 self-attention → cross-attention to encoder memory → FFN
+    3. 线性投影到标量输出
+
+    相比 pooling + MLP 的劣势：
+    - pooling 将 90 个时间步压缩为 1 个向量，丢失了大量时序信息
+    - MLP 需要从 128 维生成 365 个点，映射比过大
+
+    本解码器保留完整编码序列作为 memory，查询向量通过交叉注意力
+    从中按需提取信息，对 365 天长期预测尤为关键。
+    """
+    def __init__(self, d_model, output_len, nhead=8, num_layers=2, dropout=0.1):
+        super().__init__()
+        self.output_len = output_len
+        # 可学习的输出位置查询
+        self.queries = nn.Parameter(torch.randn(1, output_len, d_model) * 0.02)
+        # 输出位置编码
+        self.query_pos = LearnablePositionalEncoding(output_len, d_model, dropout)
+
+        # Transformer Decoder: self-attn(queries) + cross-attn(queries, memory)
+        decoder_layer = nn.TransformerDecoderLayer(
+            d_model=d_model, nhead=nhead, dim_feedforward=d_model * 4,
+            dropout=dropout, batch_first=True
+        )
+        self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
+        self.output_proj = nn.Linear(d_model, 1)
+
+    def forward(self, memory):
+        """
+        memory: (B, input_len, d_model) — 编码后的完整输入序列
+        返回:   (B, output_len)         — 预测序列
+        """
+        B = memory.size(0)
+        queries = self.queries.expand(B, -1, -1)
+        queries = self.query_pos(queries)
+        out = self.decoder(queries, memory)
+        return self.output_proj(out).squeeze(-1)
+
+
 class FreqTimeBlock(nn.Module):
     """
     频时融合模块 — FreqTimeNet 的核心构建块
@@ -284,7 +332,10 @@ class FreqTimeNet(nn.Module):
     模型结构：
     1. 输入投影 + 可学习位置编码
     2. N个 FreqTimeBlock (频时融合模块)
-    3. 全局平均池化 → 两层MLP解码器 → 完整输出序列
+    3. QueryDecoder：可学习查询向量 + 交叉注意力解码器
+       - 保留完整编码序列作为 memory（不做池化）
+       - 查询向量通过 self-attention + cross-attention 提取信息
+       - 避免 pooling 造成的信息瓶颈
 
     参数：
       input_dim:   输入特征维度 (电力数据为14)
@@ -316,16 +367,12 @@ class FreqTimeNet(nn.Module):
         # 最终层归一化
         self.final_norm = nn.LayerNorm(d_model)
 
-        # 非自回归解码器：全局平均池化 → MLP → 完整输出序列
-        # 两层MLP，中间有较大隐藏层以支持长序列(365天)的映射
-        self.decoder = nn.Sequential(
-            nn.Linear(d_model, d_model * 4),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(d_model * 4, d_model * 2),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(d_model * 2, output_len),
+        # 查询向量 + 交叉注意力解码器
+        # 保留完整编码序列作为 memory，查询向量通过 cross-attention
+        # 从中按需提取信息，避免 pooling 导致的信息瓶颈
+        self.decoder = QueryDecoder(
+            d_model=d_model, output_len=output_len,
+            nhead=8, num_layers=2, dropout=dropout
         )
 
         self._init_weights()
@@ -350,13 +397,10 @@ class FreqTimeNet(nn.Module):
         for block in self.blocks:
             x = block(x)
 
-        # 最终归一化
-        x = self.final_norm(x)
+        # 最终归一化 → memory 供解码器交叉注意力使用
+        x = self.final_norm(x)  # (B, 90, d_model)
 
-        # 全局平均池化 — 聚合所有时间步的信息
-        x = x.mean(dim=1)  # (B, d_model)
-
-        # 非自回归解码
+        # 查询向量交叉注意力解码（保留完整序列，不做 pooling）
         out = self.decoder(x)  # (B, output_len)
 
         return out
@@ -475,6 +519,7 @@ def train_model(model, train_loader, epochs, lr, wd, verbose=True):
     best_loss = float('inf')
     patience_counter = 0
     best_state = None
+    loss_history = []
 
     for epoch in tqdm(range(epochs)):
         total_loss = 0
@@ -489,6 +534,7 @@ def train_model(model, train_loader, epochs, lr, wd, verbose=True):
             total_loss += loss.item()
 
         avg_loss = total_loss / len(train_loader)
+        loss_history.append(avg_loss)
         scheduler.step(avg_loss)
 
         if avg_loss < best_loss:
@@ -508,7 +554,7 @@ def train_model(model, train_loader, epochs, lr, wd, verbose=True):
             print(f"  Epoch {epoch + 1}/{epochs}, Loss: {avg_loss:.6f}")
 
     model.load_state_dict(best_state)
-    return best_loss
+    return best_loss, loss_history
 
 
 def evaluate_model(model, test_loader, target_scaler):
@@ -544,6 +590,7 @@ def run_experiment(model_name, model_class, model_kwargs, train_loader,
     best_mse = float('inf')
     best_mae = float('inf')
     best_preds, best_targets = None, None
+    best_loss_history = None
     best_round = 0
     model_slug = model_name.lower()
 
@@ -558,8 +605,8 @@ def run_experiment(model_name, model_class, model_kwargs, train_loader,
         print(f"  Parameters: {n_params:,}")
 
         t0 = time.time()
-        train_model(model, train_loader, NUM_EPOCHS,
-                    LEARNING_RATE, WEIGHT_DECAY)
+        _, loss_history = train_model(model, train_loader, NUM_EPOCHS,
+                                       LEARNING_RATE, WEIGHT_DECAY)
         train_time = time.time() - t0
 
         mse, mae, preds, targets = evaluate_model(
@@ -568,15 +615,17 @@ def run_experiment(model_name, model_class, model_kwargs, train_loader,
         mae_list.append(mae)
         print(f"  Train time: {train_time:.1f}s, MSE: {mse:.4f}, MAE: {mae:.4f}")
 
-        # ---- 保存每轮预测数据 ----
+        # ---- 保存每轮预测数据 + loss曲线 ----
         np.savez(f'pred_{model_slug}_{output_len}d_round{r+1}.npz',
-                 preds=preds, targets=targets, mse=mse, mae=mae)
+                 preds=preds, targets=targets, mse=mse, mae=mae,
+                 loss_history=np.array(loss_history))
 
         if mse < best_mse:
             best_mse = mse
             best_mae = mae
             best_preds = preds
             best_targets = targets
+            best_loss_history = loss_history
             best_round = r + 1
             torch.save(model.state_dict(),
                        f'model_{model_slug}_{output_len}d_best.pt')
@@ -584,7 +633,8 @@ def run_experiment(model_name, model_class, model_kwargs, train_loader,
     # ---- 保存最佳轮预测数据 ----
     np.savez(f'pred_{model_slug}_{output_len}d_best.npz',
              preds=best_preds, targets=best_targets,
-             mse=best_mse, mae=best_mae, round=best_round)
+             mse=best_mse, mae=best_mae, round=best_round,
+             loss_history=np.array(best_loss_history))
 
     mse_arr = np.array(mse_list)
     mae_arr = np.array(mae_list)
@@ -676,11 +726,15 @@ if __name__ == "__main__":
     - LSTM: 递归（逐步传递隐藏状态，远距离信息衰减）
     - Transformer: 自注意力（O(N²)成对比较，缺乏周期性先验）
     - FreqTimeNet: 频域混合（O(N log N)，天然捕获周期性）
+      + 可学习频域缩放因子，稳定复数域数值
 
     2. 解码策略：
     - LSTM: 自回归（误差累积，365步后严重偏离）
-    - Transformer: 可学习查询向量 + 交叉注意力（需要额外解码器）
-    - FreqTimeNet: 非自回归直接映射（无误差累积，简洁高效）
+    - Transformer: 可学习查询向量 + 交叉注意力
+    - FreqTimeNet: 查询向量 + 交叉注意力解码器
+      保留完整编码序列作为 memory（不做池化），
+      查询向量通过 self-attn + cross-attn 按需提取信息，
+      避免 pooling → MLP 的信息瓶颈
 
     3. 多尺度处理：
     - LSTM: 单一时间尺度

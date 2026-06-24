@@ -82,6 +82,7 @@ def train_model(model, train_loader, epochs, lr, wd, verbose=True):
     best_loss = float('inf')
     patience_counter = 0
     best_state = None
+    loss_history = []
 
     for epoch in tqdm(range(epochs)):
         total_loss = 0
@@ -96,6 +97,7 @@ def train_model(model, train_loader, epochs, lr, wd, verbose=True):
             total_loss += loss.item()
 
         avg_loss = total_loss / len(train_loader)
+        loss_history.append(avg_loss)
         scheduler.step(avg_loss)
 
         if avg_loss < best_loss:
@@ -114,7 +116,7 @@ def train_model(model, train_loader, epochs, lr, wd, verbose=True):
             print(f"  Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.6f}")
 
     model.load_state_dict(best_state)
-    return best_loss
+    return best_loss, loss_history
 
 
 def evaluate_model(model, test_loader, target_scaler):
@@ -204,6 +206,7 @@ def run_experiment(model_name, model_class, model_kwargs, train_loader, test_loa
     best_mse = float('inf')
     best_mae = float('inf')
     best_preds, best_targets = None, None
+    best_loss_history = None
     best_round = 0
     model_slug = model_name.lower()
 
@@ -218,7 +221,8 @@ def run_experiment(model_name, model_class, model_kwargs, train_loader, test_loa
         print(f"  Parameters: {n_params:,}")
 
         t0 = time.time()
-        train_model(model, train_loader, NUM_EPOCHS, LEARNING_RATE, WEIGHT_DECAY)
+        _, loss_history = train_model(model, train_loader, NUM_EPOCHS,
+                                       LEARNING_RATE, WEIGHT_DECAY)
         train_time = time.time() - t0
 
         mse, mae, preds, targets = evaluate_model(model, test_loader, target_scaler)
@@ -226,15 +230,17 @@ def run_experiment(model_name, model_class, model_kwargs, train_loader, test_loa
         mae_list.append(mae)
         print(f"  Train time: {train_time:.1f}s, MSE: {mse:.4f}, MAE: {mae:.4f}")
 
-        # ---- 保存每轮预测数据 ----
+        # ---- 保存每轮预测数据 + loss曲线 ----
         np.savez(f'pred_{model_slug}_{output_len}d_round{r+1}.npz',
-                 preds=preds, targets=targets, mse=mse, mae=mae)
+                 preds=preds, targets=targets, mse=mse, mae=mae,
+                 loss_history=np.array(loss_history))
 
         if mse < best_mse:
             best_mse = mse
             best_mae = mae
             best_preds = preds
             best_targets = targets
+            best_loss_history = loss_history
             best_round = r + 1
 
             torch.save(model.state_dict(),
@@ -243,7 +249,8 @@ def run_experiment(model_name, model_class, model_kwargs, train_loader, test_loa
     # ---- 保存最佳轮预测数据 ----
     np.savez(f'pred_{model_slug}_{output_len}d_best.npz',
              preds=best_preds, targets=best_targets,
-             mse=best_mse, mae=best_mae, round=best_round)
+             mse=best_mse, mae=best_mae, round=best_round,
+             loss_history=np.array(best_loss_history))
 
     mse_arr = np.array(mse_list)
     mae_arr = np.array(mae_list)
